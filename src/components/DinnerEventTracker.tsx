@@ -42,7 +42,6 @@ const loadSupabase = async () => {
   return window.supabase;
 };
 
-const [editingDish, setEditingDish] = useState<Record<string, string>>({});
 
 // Initialize Supabase client
 const supabaseUrl = 'https://osmugbupqzpybowrksor.supabase.co';
@@ -59,6 +58,8 @@ export default function DinnerEventTracker() {
   const [newDishes, setNewDishes] = useState([{ name: '', assignedTo: '' }]);
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [editingDish, setEditingDish] = useState<Record<string, string>>({});
+
 
   useEffect(() => {
     const initSupabase = async () => {
