@@ -1,11 +1,8 @@
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { Calendar, Plus, Trash2, Users } from 'lucide-react';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://osmugbupqzpybowrksor.supabase.co';
-const supabaseKey = 'sb_publishable_dX_adplCHX5vN9YrSMtV3A_hSfmr1zS';
-const supabase = createClient(supabaseUrl, supabaseKey);
-
+// Type definitions
 interface Event {
   id: string;
   name: string;
@@ -21,6 +18,37 @@ interface Dish {
   created_at?: string;
 }
 
+declare global {
+  interface Window {
+    supabase: {
+      createClient: (url: string, key: string) => SupabaseClient;
+    };
+    [key: `dishTimeout_${string}`]: number; // CHANGED from NodeJS.Timeout to number
+  }
+}
+
+// Load Supabase from CDN
+const loadSupabase = async () => {
+  if (window.supabase) return window.supabase;
+  
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+  document.head.appendChild(script);
+  
+  await new Promise((resolve) => {
+    script.onload = resolve;
+  });
+  
+  return window.supabase;
+};
+
+const [editingDish, setEditingDish] = useState<Record<string, string>>({});
+
+// Initialize Supabase client
+const supabaseUrl = 'https://osmugbupqzpybowrksor.supabase.co';
+const supabaseKey = 'sb_publishable_dX_adplCHX5vN9YrSMtV3A_hSfmr1zS';
+let supabase: SupabaseClient | null = null;
+
 export default function DinnerEventTracker() {
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -30,9 +58,16 @@ export default function DinnerEventTracker() {
   const [newEventDate, setNewEventDate] = useState('');
   const [newDishes, setNewDishes] = useState([{ name: '', assignedTo: '' }]);
   const [loading, setLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    fetchEvents();
+    const initSupabase = async () => {
+      const supabaseLib = await loadSupabase();
+      supabase = supabaseLib.createClient(supabaseUrl, supabaseKey);
+      setInitialized(true);
+      fetchEvents();
+    };
+    initSupabase();
   }, []);
 
   useEffect(() => {
@@ -42,6 +77,7 @@ export default function DinnerEventTracker() {
   }, [selectedEvent]);
 
   const fetchEvents = async () => {
+    if (!supabase) return;
     try {
       const { data, error } = await supabase
         .from('events')
@@ -56,6 +92,7 @@ export default function DinnerEventTracker() {
   };
 
   const fetchDishes = async (eventId: string) => {
+    if (!supabase) return;
     try {
       const { data, error } = await supabase
         .from('dishes')
@@ -78,7 +115,7 @@ export default function DinnerEventTracker() {
 
     setLoading(true);
     try {
-      const { data: eventData, error: eventError } = await supabase
+      const { data: eventData, error: eventError } = await supabase!
         .from('events')
         .insert([{ name: newEventName, event_date: newEventDate }])
         .select()
@@ -95,7 +132,7 @@ export default function DinnerEventTracker() {
         }));
 
       if (dishesToInsert.length > 0) {
-        const { error: dishError } = await supabase
+        const { error: dishError } = await supabase!
           .from('dishes')
           .insert(dishesToInsert);
 
@@ -118,43 +155,60 @@ export default function DinnerEventTracker() {
 
   const updateDishAssignment = async (dishId: string, assignedTo: string) => {
     try {
-      const { error } = await supabase
+      const { error } = await supabase!
         .from('dishes')
         .update({ assigned_to: assignedTo || null })
         .eq('id', dishId);
 
       if (error) throw error;
-      if (selectedEvent) {
-        fetchDishes(selectedEvent.id);
-      }
+      if (selectedEvent) fetchDishes(selectedEvent.id);
     } catch (error) {
       console.error('Error updating dish:', error);
       alert('Error updating assignment');
     }
   };
+  
+const handleDishNameChange = (dishId: string, value: string) => {
+  // Update local state immediately for responsive typing
+  setEditingDish(prev => ({ ...prev, [dishId]: value }));
+  
+  // Clear existing timeout for this dish
+  const timeoutKey = `dishTimeout_${dishId}` as `dishTimeout_${string}`;
+  if (window[timeoutKey]) {
+    clearTimeout(window[timeoutKey]);
+  }
+  
+  // Set new timeout to save after 500ms of no typing
+  window[timeoutKey] = setTimeout(() => {
+    updateDishAssignment(dishId, value);
+  }, 500);
+};
 
   const deleteDish = async (dishId: string) => {
     try {
-      const { error } = await supabase.from('dishes').delete().eq('id', dishId);
+      const { error } = await supabase!.from('dishes').delete().eq('id', dishId);
 
       if (error) throw error;
-      if (selectedEvent) {
-        fetchDishes(selectedEvent.id);
-      }
+      if (selectedEvent) fetchDishes(selectedEvent.id);
     } catch (error) {
       console.error('Error deleting dish:', error);
     }
   };
 
-  const deleteEvent = async (eventId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-
-    if (!confirm('Are you sure you want to delete this event? All associated dishes will be deleted.')) {
+  const deleteEvent = async (eventId: string) => {
+    if (
+      !confirm(
+        'Are you sure you want to delete this event? This will also delete all associated dishes.'
+      )
+    ) {
       return;
     }
 
     try {
-      const { error } = await supabase.from('events').delete().eq('id', eventId);
+      const { error } = await supabase!
+        .from('events')
+        .delete()
+        .eq('id', eventId);
 
       if (error) throw error;
 
@@ -162,7 +216,6 @@ export default function DinnerEventTracker() {
         setSelectedEvent(null);
         setDishes([]);
       }
-
       fetchEvents();
     } catch (error) {
       console.error('Error deleting event:', error);
@@ -171,13 +224,11 @@ export default function DinnerEventTracker() {
   };
 
   const addDishToEvent = async () => {
-    if (!selectedEvent) return;
-
     const dishName = prompt('Enter dish name:');
-    if (!dishName) return;
+    if (!dishName || !selectedEvent) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await supabase!
         .from('dishes')
         .insert([
           { event_id: selectedEvent.id, name: dishName, assigned_to: null },
@@ -190,22 +241,27 @@ export default function DinnerEventTracker() {
     }
   };
 
+ if (!initialized) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-50 p-8">
+        <div className="max-w-6xl mx-auto text-center py-20">
+          <p className="text-xl text-orange-700">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-50 p-8">
       <div className="max-w-6xl mx-auto">
         <header className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-orange-900 mb-2">
-            Dinner Event Tracker
-          </h1>
-          <p className="text-orange-700">
-            Organize your dinner events and dish assignments
-          </p>
+          <h1 className="text-5xl font-bold text-orange-900 mb-2">Dinner Event Tracker</h1>
+          <p className="text-orange-700">Organize your dinner events and dish assignments</p>
         </header>
 
         <div className="grid md:grid-cols-2 gap-8">
-          {/* Events List */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-white rounded-xl shadow-lg p-4 md:p-6 flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center mb-4 md:mb-6 flex-shrink-0">
               <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
                 <Calendar className="text-orange-600" />
                 Events
@@ -220,10 +276,8 @@ export default function DinnerEventTracker() {
             </div>
 
             {showCreateEvent && (
-              <div className="mb-6 p-4 bg-orange-50 rounded-lg">
-                <h3 className="font-semibold mb-3 text-orange-900">
-                  Create New Event
-                </h3>
+              <div className="mb-6 p-4 bg-orange-50 rounded-lg flex-shrink-0">
+                <h3 className="font-semibold mb-3 text-orange-900">Create New Event</h3>
                 <input
                   type="text"
                   placeholder="Event name"
@@ -237,11 +291,9 @@ export default function DinnerEventTracker() {
                   onChange={(e) => setNewEventDate(e.target.value)}
                   className="w-full p-2 border border-orange-300 rounded mb-3"
                 />
-
+                
                 <div className="mb-3">
-                  <label className="font-medium text-sm text-gray-700 mb-2 block">
-                    Dishes:
-                  </label>
+                  <label className="font-medium text-sm text-gray-700 mb-2 block">Dishes:</label>
                   {newDishes.map((dish, index) => (
                     <div key={index} className="flex gap-2 mb-2">
                       <input
@@ -269,9 +321,7 @@ export default function DinnerEventTracker() {
                     </div>
                   ))}
                   <button
-                    onClick={() =>
-                      setNewDishes([...newDishes, { name: '', assignedTo: '' }])
-                    }
+                    onClick={() => setNewDishes([...newDishes, { name: '', assignedTo: '' }])}
                     className="text-orange-600 text-sm hover:text-orange-700 flex items-center gap-1"
                   >
                     <Plus size={16} />
@@ -304,32 +354,29 @@ export default function DinnerEventTracker() {
 
             <div className="space-y-3">
               {events.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">
-                  No events yet. Create one!
-                </p>
+                <p className="text-gray-500 text-center py-8">No events yet. Create one!</p>
               ) : (
-                events.map((event) => (
+                events.map(event => (
                   <div
                     key={event.id}
-                    onClick={() => setSelectedEvent(event)}
-                    className={`p-4 rounded-lg cursor-pointer transition ${
+                    className={`p-4 rounded-lg transition ${
                       selectedEvent?.id === event.id
                         ? 'bg-orange-100 border-2 border-orange-600'
                         : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'
                     }`}
                   >
                     <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-semibold text-gray-800">
-                          {event.name}
-                        </h3>
-                        <p className="text-sm text-gray-600">
-                          {new Date(event.event_date).toLocaleDateString()}
-                        </p>
+                      <div onClick={() => setSelectedEvent(event)} className="flex-1 cursor-pointer">
+                        <h3 className="font-semibold text-gray-800">{event.name}</h3>
+                        <p className="text-sm text-gray-600">{new Date(event.event_date).toLocaleDateString()}</p>
                       </div>
                       <button
-                        onClick={(e) => deleteEvent(event.id, e)}
-                        className="text-red-500 hover:text-red-700"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteEvent(event.id);
+                        }}
+                        className="text-red-500 hover:text-red-700 ml-2"
+                        title="Delete event"
                       >
                         <Trash2 size={18} />
                       </button>
@@ -340,9 +387,8 @@ export default function DinnerEventTracker() {
             </div>
           </div>
 
-          {/* Dishes List */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-white rounded-xl shadow-lg p-4 md:p-6 flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center mb-4 md:mb-6 flex-shrink-0">
               <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
                 <Users className="text-orange-600" />
                 Dishes
@@ -359,21 +405,15 @@ export default function DinnerEventTracker() {
             </div>
 
             {!selectedEvent ? (
-              <p className="text-gray-500 text-center py-8">
-                Select an event to view dishes
-              </p>
+              <p className="text-gray-500 text-center py-8">Select an event to view dishes</p>
             ) : dishes.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">
-                No dishes yet. Add one!
-              </p>
+              <p className="text-gray-500 text-center py-8">No dishes yet. Add one!</p>
             ) : (
               <div className="space-y-3">
-                {dishes.map((dish) => (
+                {dishes.map(dish => (
                   <div key={dish.id} className="p-4 bg-gray-50 rounded-lg">
                     <div className="flex justify-between items-start mb-2">
-                      <h3 className="font-semibold text-gray-800">
-                        {dish.name}
-                      </h3>
+                      <h3 className="font-semibold text-gray-800">{dish.name}</h3>
                       <button
                         onClick={() => deleteDish(dish.id)}
                         className="text-red-500 hover:text-red-700"
@@ -384,16 +424,12 @@ export default function DinnerEventTracker() {
                     <input
                       type="text"
                       placeholder="Enter your name to claim this dish"
-                      value={dish.assigned_to || ''}
-                      onChange={(e) =>
-                        updateDishAssignment(dish.id, e.target.value)
-                      }
+                      value={editingDish[dish.id] !== undefined ? editingDish[dish.id] : (dish.assigned_to || '')}
+                      onChange={(e) => handleDishNameChange(dish.id, e.target.value)}
                       className="w-full p-2 border border-gray-300 rounded"
                     />
                     {dish.assigned_to && (
-                      <p className="text-sm text-green-600 mt-1">
-                        ✓ Assigned to {dish.assigned_to}
-                      </p>
+                      <p className="text-sm text-green-600 mt-1">✓ Assigned to {dish.assigned_to}</p>
                     )}
                   </div>
                 ))}
