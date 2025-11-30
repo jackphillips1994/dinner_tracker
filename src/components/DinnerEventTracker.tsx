@@ -1,17 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Calendar, Plus, Trash2, Users } from 'lucide-react';
 
-// Initialize Supabase client
-// Replace these with your actual Supabase project URL and anon key
 const supabaseUrl = 'https://osmugbupqzpybowrksor.supabase.co';
 const supabaseKey = 'sb_publishable_dX_adplCHX5vN9YrSMtV3A_hSfmr1zS';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+interface Event {
+  id: string;
+  name: string;
+  event_date: string;
+  created_at?: string;
+}
+
+interface Dish {
+  id: string;
+  event_id: string;
+  name: string;
+  assigned_to: string | null;
+  created_at?: string;
+}
+
 export default function DinnerEventTracker() {
-  const [events, setEvents] = useState([]);
-  const [selectedEvent, setSelectedEvent] = useState(null);
-  const [dishes, setDishes] = useState([]);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [dishes, setDishes] = useState<Dish[]>([]);
   const [showCreateEvent, setShowCreateEvent] = useState(false);
   const [newEventName, setNewEventName] = useState('');
   const [newEventDate, setNewEventDate] = useState('');
@@ -42,7 +55,7 @@ export default function DinnerEventTracker() {
     }
   };
 
-  const fetchDishes = async (eventId) => {
+  const fetchDishes = async (eventId: string) => {
     try {
       const { data, error } = await supabase
         .from('dishes')
@@ -103,7 +116,7 @@ export default function DinnerEventTracker() {
     }
   };
 
-  const updateDishAssignment = async (dishId, assignedTo) => {
+  const updateDishAssignment = async (dishId: string, assignedTo: string) => {
     try {
       const { error } = await supabase
         .from('dishes')
@@ -111,25 +124,55 @@ export default function DinnerEventTracker() {
         .eq('id', dishId);
 
       if (error) throw error;
-      fetchDishes(selectedEvent.id);
+      if (selectedEvent) {
+        fetchDishes(selectedEvent.id);
+      }
     } catch (error) {
       console.error('Error updating dish:', error);
       alert('Error updating assignment');
     }
   };
 
-  const deleteDish = async (dishId) => {
+  const deleteDish = async (dishId: string) => {
     try {
       const { error } = await supabase.from('dishes').delete().eq('id', dishId);
 
       if (error) throw error;
-      fetchDishes(selectedEvent.id);
+      if (selectedEvent) {
+        fetchDishes(selectedEvent.id);
+      }
     } catch (error) {
       console.error('Error deleting dish:', error);
     }
   };
 
+  const deleteEvent = async (eventId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (!confirm('Are you sure you want to delete this event? All associated dishes will be deleted.')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('events').delete().eq('id', eventId);
+
+      if (error) throw error;
+
+      if (selectedEvent?.id === eventId) {
+        setSelectedEvent(null);
+        setDishes([]);
+      }
+
+      fetchEvents();
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      alert('Error deleting event');
+    }
+  };
+
   const addDishToEvent = async () => {
+    if (!selectedEvent) return;
+
     const dishName = prompt('Enter dish name:');
     if (!dishName) return;
 
@@ -275,12 +318,22 @@ export default function DinnerEventTracker() {
                         : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'
                     }`}
                   >
-                    <h3 className="font-semibold text-gray-800">
-                      {event.name}
-                    </h3>
-                    <p className="text-sm text-gray-600">
-                      {new Date(event.event_date).toLocaleDateString()}
-                    </p>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="font-semibold text-gray-800">
+                          {event.name}
+                        </h3>
+                        <p className="text-sm text-gray-600">
+                          {new Date(event.event_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => deleteEvent(event.id, e)}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
